@@ -1,0 +1,18 @@
+# Node (in case npm install is run at root)
+node_modules/
+package-lock.json
+
+# Docker overrides (keep base configs tracked!)
+docker-compose.override.yml
+
+# Environment files (if ever added at root)
+.env
+.env.*
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE/editor
+.idea/
+.vscode/
