@@ -41,7 +41,6 @@ Fully containerized with Docker for easy local development.
 
    This will:
    - Build Docker images
-   - Create a fresh Laravel app in `src/`
    - Generate `.env` with proper DB/Reverb config
    - Generate `APP_KEY`
    - Fix permissions for `storage/` and `bootstrap/cache/`
@@ -101,32 +100,6 @@ docker compose down
 ```
 
 ---
-
-## 🐛 Troubleshooting
-
-**Messages don’t appear live**  
-- Make sure your event implements `ShouldBroadcastNow`.  
-- Client must listen with a leading dot if you used `broadcastAs('MessageSent')`:
-
-  ```js
-  window.Echo.channel('chat').listen('.MessageSent', (e) => {
-    appendMessage(e.user.name, e.content);
-  });
-  ```
-
-**500 error on `/messages`**  
-- Ensure `.env` uses:
-  ```env
-  REVERB_HOST=reverb       # for PHP inside containers
-  VITE_REVERB_HOST=127.0.0.1  # for browser on host
-  ```
-
-Then clear config and restart:
-
-```powershell
-docker compose run --rm app php artisan config:clear
-docker compose restart app reverb
-```
 
 **Slow performance on Windows**  
 - Use named volumes for `storage/` and `bootstrap/cache/`.  
