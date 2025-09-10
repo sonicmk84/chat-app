@@ -163,8 +163,12 @@ Write-Host "Building frontend (Vite)..."
 docker compose run --rm -T app npm run build
 
 # 10) Broadcasting scaffolding (safe to re-run)
-Write-Host "Installing broadcasting (Reverb) scaffolding..."
-docker compose run --rm app php artisan install:broadcasting --reverb
+if (-Not (Test-Path "src/config/broadcasting.php")) {
+    Write-Host "Installing broadcasting (Reverb) scaffolding..."
+    docker compose run --rm app php artisan install:broadcasting --reverb --no-interaction
+} else {
+    Write-Host "Broadcasting already installed. Skipping."
+}
 
 # 11) Migrate DB
 Write-Host "Starting DB and running migrations..."
@@ -173,9 +177,25 @@ docker compose run --rm app php artisan migrate --force
 
 # 12) Clear caches
 Write-Host "Clearing caches..."
-docker compose run --rm app php artisan config:clear
-docker compose run --rm app php artisan cache:clear
-docker compose run --rm app php artisan view:clear
+# try artisan clears
+$clears = @(
+  "php artisan config:clear",
+  "php artisan cache:clear",
+  "php artisan view:clear",
+  "php artisan route:clear",
+  "php artisan event:clear",
+  "php artisan optimize:clear"
+)
+foreach ($cmd in $clears) {
+  try {
+    docker compose run --rm app $cmd
+  } catch {
+    Write-Host "Warning: '$cmd' failed. Continuing..."
+  }
+}
+
+# final fallback: manually nuke cached files
+docker compose run --rm app bash -lc "find storage/framework/cache -type f -delete || true"
 
 # 13) Start services
 Write-Host "Starting containers..."
