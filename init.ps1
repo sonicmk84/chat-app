@@ -4,10 +4,13 @@
 $ErrorActionPreference = "Stop"
 
 Write-Host "Initializing Laravel chat app..."
-
-# 0) Quick preflight checks
 Write-Host "Checking Docker..."
 docker version *> $null
+
+# Resolve project paths for docker -v (forward slashes)
+$ProjectRoot = (Get-Location).Path
+$ProjectRootFS = $ProjectRoot -replace '\\','/'
+$SrcHostPath = "$ProjectRootFS/src"
 
 # 1) Reset src/ (fresh install)
 if (Test-Path "src") {
@@ -16,13 +19,14 @@ if (Test-Path "src") {
 }
 New-Item -ItemType Directory -Path "src" | Out-Null
 
-# 2) Build containers
+# 2) Build images
 Write-Host "Building Docker images..."
 docker compose build
 
 # 3) Create a fresh Laravel app into ./src
+# IMPORTANT: use docker *run* with only a single bind mount, so the directory is truly empty to Composer.
 Write-Host "Installing Laravel into ./src ..."
-docker compose run --rm app composer create-project laravel/laravel .
+docker run --rm -v "$SrcHostPath:/var/www/html" chat-app-app composer create-project laravel/laravel .
 
 # 4) Create .env (overwrite with project-required settings)
 Write-Host "Creating .env ..."
@@ -47,9 +51,7 @@ LOG_STACK=single
 LOG_DEPRECATIONS_CHANNEL=null
 LOG_LEVEL=debug
 
-# ---------------------------
 # Database (container-to-container)
-# ---------------------------
 DB_CONNECTION=mysql
 DB_HOST=db
 DB_PORT=3306
@@ -57,9 +59,7 @@ DB_DATABASE=chatapp
 DB_USERNAME=chatuser
 DB_PASSWORD=chatpass
 
-# ---------------------------
 # Session / Cache / Queue (fast dev defaults)
-# ---------------------------
 SESSION_DRIVER=file
 SESSION_LIFETIME=120
 SESSION_ENCRYPT=false
@@ -70,9 +70,7 @@ CACHE_STORE=file
 CACHE_DRIVER=file
 QUEUE_CONNECTION=sync
 
-# ---------------------------
 # Broadcast (Laravel Reverb)
-# ---------------------------
 BROADCAST_DRIVER=reverb
 BROADCAST_CONNECTION=reverb
 
@@ -98,17 +96,13 @@ VITE_REVERB_SCHEME=\${REVERB_SCHEME}
 # Allow both origins
 REVERB_ALLOWED_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
 
-# ---------------------------
 # Redis (unused in dev)
-# ---------------------------
 REDIS_CLIENT=phpredis
 REDIS_HOST=127.0.0.1
 REDIS_PASSWORD=null
 REDIS_PORT=6379
 
-# ---------------------------
 # Mail (dummy in dev)
-# ---------------------------
 MAIL_MAILER=log
 MAIL_SCHEME=null
 MAIL_HOST=127.0.0.1
@@ -118,13 +112,11 @@ MAIL_PASSWORD=null
 MAIL_FROM_ADDRESS="hello@example.com"
 MAIL_FROM_NAME="\${APP_NAME}"
 
-# ---------------------------
 # Vite
-# ---------------------------
 VITE_APP_NAME="\${APP_NAME}"
 "@ | Set-Content -Encoding UTF8 $envPath
 
-# 5) Key + permissions for storage/cache (works for bind-mount or named volumes)
+# 5) Key + permissions for storage/cache
 Write-Host "Generating app key..."
 docker compose run --rm app php artisan key:generate
 
@@ -148,6 +140,7 @@ docker compose run --rm app php artisan install:broadcasting --reverb
 
 # 8) Database migrations
 Write-Host "Running migrations..."
+docker compose up -d db
 docker compose run --rm app php artisan migrate
 
 # 9) Clear caches
@@ -161,7 +154,6 @@ Write-Host "Starting containers..."
 docker compose up -d
 docker compose up -d reverb
 
-# 11) Final checks
 Write-Host ""
 Write-Host "Done!"
 Write-Host "App:      http://localhost:8080"
