@@ -1,37 +1,52 @@
-# Requires: PowerShell 5+ (Windows), Docker Desktop running
-# Purpose: Fresh install + bootstrap of the Laravel + MySQL + Reverb (WebSockets) stack inside Docker.
+# init.ps1
+# Purpose: Bootstrap this Laravel + MySQL + Reverb stack.
+# Default: Use existing code in ./src (DO NOT overwrite it).
+# Optional: -BootstrapFromTemplate creates a fresh Laravel app if ./src is empty.
+
+param(
+  [switch]$BootstrapFromTemplate
+)
 
 $ErrorActionPreference = "Stop"
-
 Write-Host "Initializing Laravel chat app..."
-Write-Host "Checking Docker..."
 docker version *> $null
 
-# Resolve project paths for docker -v (forward slashes)
+# Resolve paths for docker -v (forward slashes)
 $ProjectRoot = (Get-Location).Path
 $ProjectRootFS = $ProjectRoot -replace '\\','/'
 $SrcHostPath = "$ProjectRootFS/src"
 
-# 1) Reset src/ (fresh install)
-if (Test-Path "src") {
-    Write-Host "Cleaning ./src ..."
-    Remove-Item -Recurse -Force "src"
+# Helper: does this repo already contain a Laravel app?
+function Test-LaravelPresent {
+  return (Test-Path "src/artisan")
 }
-New-Item -ItemType Directory -Path "src" | Out-Null
+
+# 1) Ensure ./src exists
+if (!(Test-Path "src")) { New-Item -ItemType Directory -Path "src" | Out-Null }
 
 # 2) Build images
 Write-Host "Building Docker images..."
 docker compose build
 
-# 3) Create a fresh Laravel app into ./src
-# IMPORTANT: use docker *run* with only a single bind mount, so the directory is truly empty to Composer.
-Write-Host "Installing Laravel into ./src ..."
-docker run --rm -v "$SrcHostPath:/var/www/html" chat-app-app composer create-project laravel/laravel .
+# 3) Optionally scaffold a brand-new Laravel app (template mode)
+if ($BootstrapFromTemplate) {
+  if (Test-LaravelPresent) {
+    Write-Host "src/artisan already exists. Skipping template bootstrap."
+  } else {
+    Write-Host "Bootstrapping a fresh Laravel app into ./src ..."
+    docker run --rm -v "${SrcHostPath}:/var/www/html" chat-app-app composer create-project laravel/laravel .
+  }
+} else {
+  if (!(Test-LaravelPresent)) {
+    throw "No Laravel app found in ./src. Either clone the repo that includes src/, or run: .\init.ps1 -BootstrapFromTemplate"
+  }
+}
 
-# 4) Create .env (overwrite with project-required settings)
-Write-Host "Creating .env ..."
+# 4) .env handling
 $envPath = "src/.env"
-@"
+if (!(Test-Path $envPath)) {
+  Write-Host "Creating .env ..."
+@'
 APP_NAME=Laravel
 APP_ENV=local
 APP_KEY=
@@ -88,10 +103,10 @@ REVERB_SERVER_HOST=0.0.0.0
 REVERB_SERVER_PORT=6001
 
 # BROWSER (your PC) -> REVERB (host mapped port)
-VITE_REVERB_APP_KEY=\${REVERB_APP_KEY}
+VITE_REVERB_APP_KEY=${REVERB_APP_KEY}
 VITE_REVERB_HOST=127.0.0.1
-VITE_REVERB_PORT=\${REVERB_PORT}
-VITE_REVERB_SCHEME=\${REVERB_SCHEME}
+VITE_REVERB_PORT=${REVERB_PORT}
+VITE_REVERB_SCHEME=${REVERB_SCHEME}
 
 # Allow both origins
 REVERB_ALLOWED_ORIGINS=http://127.0.0.1:8080,http://localhost:8080
@@ -110,46 +125,59 @@ MAIL_PORT=2525
 MAIL_USERNAME=null
 MAIL_PASSWORD=null
 MAIL_FROM_ADDRESS="hello@example.com"
-MAIL_FROM_NAME="\${APP_NAME}"
+MAIL_FROM_NAME="${APP_NAME}"
 
 # Vite
-VITE_APP_NAME="\${APP_NAME}"
-"@ | Set-Content -Encoding UTF8 $envPath
+VITE_APP_NAME="${APP_NAME}"
+'@ | Set-Content -Encoding UTF8 $envPath
+} else {
+  Write-Host ".env already exists. Leaving it as-is."
+}
 
-# 5) Key + permissions for storage/cache
+# 5) Composer install (your existing code’s dependencies)
+Write-Host "Installing composer dependencies..."
+docker compose run --rm app composer install --no-interaction --prefer-dist
+
+# 6) App key
 Write-Host "Generating app key..."
-docker compose run --rm app php artisan key:generate
+docker compose run --rm app php artisan key:generate --force
 
+# 7) Storage/bootstrap perms (works for bind-mount or named volumes)
 Write-Host "Ensuring storage/bootstrap permissions..."
 docker compose run --rm app bash -lc "mkdir -p storage/framework/{cache,sessions,views} bootstrap/cache && chmod -R 777 storage bootstrap/cache"
 
-# 6) Install Breeze auth (Blade) + build assets
-Write-Host "Installing Laravel Breeze..."
-docker compose run --rm app composer require laravel/breeze --dev
-docker compose run --rm app php artisan breeze:install blade
+# 8) Breeze (only if not already installed)
+if (!(Test-Path "src/resources/views/auth") -and !(Test-Path "src/routes/auth.php")) {
+  Write-Host "Installing Laravel Breeze (Blade)..."
+  docker compose run --rm app composer require laravel/breeze --dev
+  docker compose run --rm app php artisan breeze:install blade
+} else {
+  Write-Host "Breeze appears to be installed. Skipping."
+}
 
+# 9) NPM install & build
 Write-Host "Installing npm dependencies..."
 docker compose run --rm -T app npm install
 
 Write-Host "Building frontend (Vite)..."
 docker compose run --rm -T app npm run build
 
-# 7) Install broadcasting (Reverb) scaffolding (safe to re-run)
-Write-Host "Installing broadcasting (Reverb)..."
+# 10) Broadcasting scaffolding (safe to re-run)
+Write-Host "Installing broadcasting (Reverb) scaffolding..."
 docker compose run --rm app php artisan install:broadcasting --reverb
 
-# 8) Database migrations
-Write-Host "Running migrations..."
+# 11) Migrate DB
+Write-Host "Starting DB and running migrations..."
 docker compose up -d db
-docker compose run --rm app php artisan migrate
+docker compose run --rm app php artisan migrate --force
 
-# 9) Clear caches
+# 12) Clear caches
 Write-Host "Clearing caches..."
 docker compose run --rm app php artisan config:clear
 docker compose run --rm app php artisan cache:clear
 docker compose run --rm app php artisan view:clear
 
-# 10) Start core services + Reverb
+# 13) Start services
 Write-Host "Starting containers..."
 docker compose up -d
 docker compose up -d reverb
