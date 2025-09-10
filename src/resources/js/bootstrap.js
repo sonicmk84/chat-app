@@ -14,11 +14,14 @@ window.axios.defaults.headers.common['X-Requested-With'] = 'XMLHttpRequest';
 
 import './echo';
 
+const isDev = import.meta.env.DEV;
+
 window.Echo = new Echo({
   broadcaster: 'reverb',
   key: import.meta.env.VITE_REVERB_APP_KEY ?? 'local',
   wsHost: import.meta.env.VITE_REVERB_HOST ?? 'localhost',
   wsPort: Number(import.meta.env.VITE_REVERB_PORT ?? 6001),
   wssPort: Number(import.meta.env.VITE_REVERB_PORT ?? 6001),
-  forceTLS: (import.meta.env.VITE_REVERB_SCHEME ?? 'http') === 'https',
+  forceTLS: !isDev && (import.meta.env.VITE_REVERB_SCHEME ?? 'http') === 'https',
+  enabledTransports: isDev ? ['ws'] : ['ws','wss'],
 });
